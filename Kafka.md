@@ -272,7 +272,7 @@ step1 :
 [MySQL官网](https://dev.mysql.com/downloads/mysql/)下载MySQL安装包:
 ![](kafka/官网下载MySQL安装tar包.png)
 
-step2: 上传
+step2: 上传包
 winscp(或其他) 软件上传到Linux指定目录下. (此处传到: /mysoftware/)  
 
 step3: 解压
@@ -308,6 +308,13 @@ step5 : 依次安装
 rpm -ivh 
 ```
 **注：ivh中， i-install安装；v-verbose进度条；h-hash哈希校验**
+
+安装成功提示:
+![kafkaeagle安装成功提示.png](kafka/kafkaeagle安装成功提示.png)
+监控首页
+![kafkaeagle登录页.png](kafka/kafkaeagle登录页.png)
+
+
 ## 生态
 ## 升级
 # APIs
@@ -925,6 +932,11 @@ public class AcksProducer {
 
  确认应答与重试机制原理流程图参见如下:
  ![确认应答与重试机制原理流程图](kafka/确认应答与重试机制原理流程图.png)
+ 
+ 
+ 
+ ## Kafka-Eagle
+ 
 # 配置
 ## 代理(Broker)配置
 ## 主题配置
