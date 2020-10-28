@@ -174,7 +174,6 @@ vim zk.cfg
 ```
 按下图方式对配置文件做修改(zookeeper快照数据存储路径设置和集群服务器节点信息配置):
 ![zookeeper配置文件](kafka/zookeeper配置文件.png)
-
 然后按刚才的修改创建zookeeper快照数据的存储目录:
 ```shell script
 mkdir /root/zkdata
