@@ -45,8 +45,331 @@ show profile all for query 1; -- 查询性能详细信息
 
 ![show_profile_all](MySQL调优/show profiles_1_all.png)
 
-## performance schema (高级查询剖析)
+## [performance schema (高级查询剖析)](https://dev.mysql.com/doc/refman/8.0/en/performance-schema-quick-start.html)
 ### 介绍
+
+Performance Schemap配置是默认开启的. 可以通过修改MySQL服务端配置文件`my.cnf`,在其中添加如下配置行显示地开启或者关闭该配置.
+```mysql
+[mysqld]
+performance_schema=ON
+```
+通过如下命令可以验证`performance schema`开启与否:
+```mysql
+mysql> SHOW VARIABLES LIKE 'performance_schema';
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| performance_schema | ON    |
++--------------------+-------+
+```
+ON表示开启成功, OFF表示有错误, 此时应该查看错误日志.
+`Performance Schema` 本质上是存储引擎的一种实现, 所以执行如下命令会有响应的输出:
+```mysql
+mysql> SELECT * FROM INFORMATION_SCHEMA.ENGINES WHERE ENGINE='PERFORMANCE_SCHEMA'\G
+*************************** 1. row ***************************
+      ENGINE: PERFORMANCE_SCHEMA
+     SUPPORT: YES
+     COMMENT: Performance Schema
+TRANSACTIONS: NO
+          XA: NO
+  SAVEPOINTS: NO
+
+mysql> SHOW ENGINES\G
+...
+      Engine: PERFORMANCE_SCHEMA
+     Support: YES
+     Comment: Performance Schema
+Transactions: NO
+          XA: NO
+  Savepoints: NO
+...
+```
+`performance_schema`存储引擎作用于`performance_schema`库中的表.
+`performance_schema`库及其中表的结构信息可以从` INFORMATION_SCHEMA `库中获取. 一下两种方式都能查看`performance_schema`库中的表
+```mysql
+mysql> SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = 'performance_schema';
++------------------------------------------------------+
+| TABLE_NAME                                           |
++------------------------------------------------------+
+| accounts                                             |
+| cond_instances                                       |
+...
+| events_stages_current                                |
+| events_stages_history                                |
+| events_stages_history_long                           |
+| events_stages_summary_by_account_by_event_name       |
+| events_stages_summary_by_host_by_event_name          |
+| events_stages_summary_by_thread_by_event_name        |
+| events_stages_summary_by_user_by_event_name          |
+| events_stages_summary_global_by_event_name           |
+| events_statements_current                            |
+| events_statements_history                            |
+| events_statements_history_long                       |
+...
+| file_instances                                       |
+| file_summary_by_event_name                           |
+| file_summary_by_instance                             |
+| host_cache                                           |
+| hosts                                                |
+| memory_summary_by_account_by_event_name              |
+| memory_summary_by_host_by_event_name                 |
+| memory_summary_by_thread_by_event_name               |
+| memory_summary_by_user_by_event_name                 |
+| memory_summary_global_by_event_name                  |
+| metadata_locks                                       |
+| mutex_instances                                      |
+| objects_summary_global_by_type                       |
+| performance_timers                                   |
+| replication_connection_configuration                 |
+| replication_connection_status                        |
+| replication_applier_configuration                    |
+| replication_applier_status                           |
+| replication_applier_status_by_coordinator            |
+| replication_applier_status_by_worker                 |
+| rwlock_instances                                     |
+| session_account_connect_attrs                        |
+| session_connect_attrs                                |
+| setup_actors                                         |
+| setup_consumers                                      |
+| setup_instruments                                    |
+| setup_objects                                        |
+| socket_instances                                     |
+| socket_summary_by_event_name                         |
+| socket_summary_by_instance                           |
+| table_handles                                        |
+| table_io_waits_summary_by_index_usage                |
+| table_io_waits_summary_by_table                      |
+| table_lock_waits_summary_by_table                    |
+| threads                                              |
+| users                                                |
++------------------------------------------------------+
+
+mysql> SHOW TABLES FROM performance_schema;
++------------------------------------------------------+
+| Tables_in_performance_schema                         |
++------------------------------------------------------+
+| accounts                                             |
+| cond_instances                                       |
+| events_stages_current                                |
+| events_stages_history                                |
+| events_stages_history_long                           |
+...
+```
+`performance_schema`库中的表会随着时间 的推移而越来越多. 因为会有越来越多的instrument生产者事件. 根据采集信息的类别, 
+### 2、performance_schema表的分类
+
+performance_schema库下的表可以按照监视不同的纬度就行分组:
+ 当前事件表(Current events), 历史事件和总结表(event histories and summaries), 对象实例表(object instances), and 配置信息表(setup (configuration) information) 
+下面简单展示了几个这些表的部分操作, 详细操作信息可以参考官网[Section 26.12, “Performance Schema Table Descriptions”.](https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-descriptions.html)
+
+首先, 并非所有生产者和消费者配置项都是开启的, 所以performance schema并非默认搜集所有事件信息. 要想开启所有事件采集和消费的配置并开启计时配置, 执行下面的两行命令即可:
+
+```mysql
+mysql> UPDATE performance_schema.setup_instruments
+       SET ENABLED = 'YES', TIMED = 'YES';
+Query OK, 560 rows affected (0.04 sec)
+mysql> UPDATE performance_schema.setup_consumers
+       SET ENABLED = 'YES';
+Query OK, 10 rows affected (0.00 sec)
+```
+要查看服务器当前正在执行说明可以执行下面的命令, 输出结果每一行代表一个线程最近执行的操作:
+```mysql
+mysql> SELECT *
+       FROM performance_schema.events_waits_current\G
+*************************** 1. row ***************************
+            THREAD_ID: 0
+             EVENT_ID: 5523
+         END_EVENT_ID: 5523
+           EVENT_NAME: wait/synch/mutex/mysys/THR_LOCK::mutex
+               SOURCE: thr_lock.c:525
+          TIMER_START: 201660494489586
+            TIMER_END: 201660494576112
+           TIMER_WAIT: 86526
+                SPINS: NULL
+        OBJECT_SCHEMA: NULL
+          OBJECT_NAME: NULL
+           INDEX_NAME: NULL
+          OBJECT_TYPE: NULL
+OBJECT_INSTANCE_BEGIN: 142270668
+     NESTING_EVENT_ID: NULL
+   NESTING_EVENT_TYPE: NULL
+            OPERATION: lock
+      NUMBER_OF_BYTES: NULL
+                FLAGS: 0
+...
+```
+上述输出结果的说明:
+```java
+//  该事件表示线程id为0的线程正在等待子系统mysys的互斥锁:THR_LOCK::mutex，等待时间为86526皮秒(1皮秒=一万亿分之一秒).
+//  属性说明：
+//	id:事件来自哪个线程，事件编号是多少
+//	event_name:表示检测到的具体的内容
+//	source:表示这个检测代码在哪个源文件中以及行号
+//	timer_start:表示该事件的开始时间
+//	timer_end:表示该事件的结束时间
+//	timer_wait:表示该事件总的花费时间
+// 注意：_current表中每个线程只保留一条记录，一旦线程完成工作，该表中不会再记录该线程的事件信息, 如果事件未结束, 那么timer_end和timer_wait会是空.
+```
+![开启等待事件配置项并查看当前server执行信息](MySQL调优/开启等待事件配置项并查看当前server执行信息.png)
+
+历史表和当前事件表的结构信息类似,只是历史表记录的是服务器最近(recently)执行的操作, 而不是当前(currently)  .
+
+ `events_waits_history`表: 显示每个线程最近的十个事件信息.
+ `events_waits_history_long`表: 显示最近的1000个事件.
+For example, to see information for recent events produced by thread 13, do this:
+若想查看线程13最近执行的事件信息, 可以执行命令:
+```mysql
+mysql> SELECT EVENT_ID, EVENT_NAME, TIMER_WAIT
+       FROM performance_schema.events_waits_history
+       WHERE THREAD_ID = 13
+       ORDER BY EVENT_ID;
++----------+-----------------------------------------+------------+
+| EVENT_ID | EVENT_NAME                              | TIMER_WAIT |
++----------+-----------------------------------------+------------+
+|       86 | wait/synch/mutex/mysys/THR_LOCK::mutex  |     686322 |
+|       87 | wait/synch/mutex/mysys/THR_LOCK_malloc  |     320535 |
+|       88 | wait/synch/mutex/mysys/THR_LOCK_malloc  |     339390 |
+|       89 | wait/synch/mutex/mysys/THR_LOCK_malloc  |     377100 |
+|       90 | wait/synch/mutex/sql/LOCK_plugin        |     614673 |
+|       91 | wait/synch/mutex/sql/LOCK_open          |     659925 |
+|       92 | wait/synch/mutex/sql/THD::LOCK_thd_data |     494001 |
+|       93 | wait/synch/mutex/mysys/THR_LOCK_malloc  |     222489 |
+|       94 | wait/synch/mutex/mysys/THR_LOCK_malloc  |     214947 |
+|       95 | wait/synch/mutex/mysys/LOCK_alarm       |     312993 |
++----------+-----------------------------------------+------------+
+```
+
+当历史表存满后, 新来的时间会被插入, 而历史事件会被清除.
+select thread_id,event_id,event_name,timer_wait from events_waits_history order by thread_id limit 21;
+
+![events_waits_history表查询结果](MySQL调优/events_waits_history表查询结果.png)
+
+总结表(Summary tables)存储的是所有事件按时间聚合的信息, 聚合的方式可以是多样的.为了查看哪个instruments事件执行次数最多, 或者等待时长最长,查询`events_waits_summary_global_by_event_name`表, 并按COUNT_STAR 或 SUM_TIMER_WAIT列进行排序即可.
+```mysql
+mysql> SELECT EVENT_NAME, COUNT_STAR
+       FROM performance_schema.events_waits_summary_global_by_event_name
+       ORDER BY COUNT_STAR DESC LIMIT 10;
++---------------------------------------------------+------------+
+| EVENT_NAME                                        | COUNT_STAR |
++---------------------------------------------------+------------+
+| wait/synch/mutex/mysys/THR_LOCK_malloc            |       6419 |
+| wait/io/file/sql/FRM                              |        452 |
+| wait/synch/mutex/sql/LOCK_plugin                  |        337 |
+| wait/synch/mutex/mysys/THR_LOCK_open              |        187 |
+| wait/synch/mutex/mysys/LOCK_alarm                 |        147 |
+| wait/synch/mutex/sql/THD::LOCK_thd_data           |        115 |
+| wait/io/file/myisam/kfile                         |        102 |
+| wait/synch/mutex/sql/LOCK_global_system_variables |         89 |
+| wait/synch/mutex/mysys/THR_LOCK::mutex            |         89 |
+| wait/synch/mutex/sql/LOCK_open                    |         88 |
++---------------------------------------------------+------------+
+
+mysql> SELECT EVENT_NAME, SUM_TIMER_WAIT
+       FROM performance_schema.events_waits_summary_global_by_event_name
+       ORDER BY SUM_TIMER_WAIT DESC LIMIT 10;
++----------------------------------------+----------------+
+| EVENT_NAME                             | SUM_TIMER_WAIT |
++----------------------------------------+----------------+
+| wait/io/file/sql/MYSQL_LOG             |     1599816582 |
+| wait/synch/mutex/mysys/THR_LOCK_malloc |     1530083250 |
+| wait/io/file/sql/binlog_index          |     1385291934 |
+| wait/io/file/sql/FRM                   |     1292823243 |
+| wait/io/file/myisam/kfile              |      411193611 |
+| wait/io/file/myisam/dfile              |      322401645 |
+| wait/synch/mutex/mysys/LOCK_alarm      |      145126935 |
+| wait/io/file/sql/casetest              |      104324715 |
+| wait/synch/mutex/sql/LOCK_plugin       |       86027823 |
+| wait/io/file/sql/pid                   |       72591750 |
++----------------------------------------+----------------+
+```  
+![执行次数最多的instruments](MySQL调优/执行次数最多的instruments.png)
+
+![等待时长最长的instruments](MySQL调优/等待时长最长的instruments.png)
+
+instance表记录了哪些类型的对象会被检测。这些对象在被server使用时，在该表中将会产生一条事件记录，例如，file_instances表列出了文件I/O操作及其关联文件名
+```mysql
+mysql> SELECT *
+       FROM performance_schema.file_instances\G
+*************************** 1. row ***************************
+ FILE_NAME: /opt/mysql-log/60500/binlog.000007
+EVENT_NAME: wait/io/file/sql/binlog
+OPEN_COUNT: 0
+*************************** 2. row ***************************
+ FILE_NAME: /opt/mysql/60500/data/mysql/tables_priv.MYI
+EVENT_NAME: wait/io/file/myisam/kfile
+OPEN_COUNT: 1
+*************************** 3. row ***************************
+ FILE_NAME: /opt/mysql/60500/data/mysql/columns_priv.MYI
+EVENT_NAME: wait/io/file/myisam/kfile
+OPEN_COUNT: 1
+...
+```
+
+setup表用来配置和展示监控特征.例如, 表`setup_instruments` 罗列了哪些instruments事件被采集, 被计时等.
+```mysql
+mysql> SELECT NAME, ENABLED, TIMED
+       FROM performance_schema.setup_instruments;
++---------------------------------------------------+---------+-------+
+| NAME                                              | ENABLED | TIMED |
++---------------------------------------------------+---------+-------+
+...
+| stage/sql/end                                     | NO      | NO    |
+| stage/sql/executing                               | NO      | NO    |
+| stage/sql/init                                    | NO      | NO    |
+| stage/sql/insert                                  | NO      | NO    |
+...
+| statement/sql/load                                | YES     | YES   |
+| statement/sql/grant                               | YES     | YES   |
+| statement/sql/check                               | YES     | YES   |
+| statement/sql/flush                               | YES     | YES   |
+...
+| wait/synch/mutex/sql/LOCK_global_read_lock        | YES     | YES   |
+| wait/synch/mutex/sql/LOCK_global_system_variables | YES     | YES   |
+| wait/synch/mutex/sql/LOCK_lock_db                 | YES     | YES   |
+| wait/synch/mutex/sql/LOCK_manager                 | YES     | YES   |
+...
+| wait/synch/rwlock/sql/LOCK_grant                  | YES     | YES   |
+| wait/synch/rwlock/sql/LOGGER::LOCK_logger         | YES     | YES   |
+| wait/synch/rwlock/sql/LOCK_sys_init_connect       | YES     | YES   |
+| wait/synch/rwlock/sql/LOCK_sys_init_slave         | YES     | YES   |
+...
+| wait/io/file/sql/binlog                           | YES     | YES   |
+| wait/io/file/sql/binlog_index                     | YES     | YES   |
+| wait/io/file/sql/casetest                         | YES     | YES   |
+| wait/io/file/sql/dbopt                            | YES     | YES   |
+...
+```
+
+解释:
+An instrument name consists of a sequence of elements separated by '/' characters. Example names:
+一个生产者名称由一串以`/`分割的字符串元素组成, 如:
+```mysql
+wait/io/file/myisam/log
+wait/io/file/mysys/charset
+wait/lock/table/sql/handler
+wait/synch/cond/mysys/COND_alarm
+wait/synch/cond/sql/BINLOG::update_cond
+wait/synch/mutex/mysys/BITMAP_mutex
+wait/synch/mutex/sql/LOCK_delete
+wait/synch/rwlock/sql/Query_cache_query::lock
+stage/sql/closing tables
+stage/sql/Sorting result
+statement/com/Execute
+statement/com/Query
+statement/sql/create_table
+statement/sql/lock_tables
+errors
+```
+该树形结构的名称从左往右逐步具象化.一个instruments所拥有的元素的个数由其类型决定. 给定元素的意义由其左边所有元素一起决定.
+例如, myisam出现在如下两个instruments名称中, 但是, 一个与文件io有关, 而第二个则与同步有关.
+```mysql
+wait/io/file/myisam/log
+wait/synch/cond/myisam/MI_SORT_INFO::cond
+``` 
+
+
+
 **MySQL的performance schema 用于监控MySQL server在一个较低级别的运行过程中的资源消耗、资源等待等情况**。
 特点如下：
 ​1、提供了一种在数据库运行时实时检查server的内部执行情况的方法。performance_schema 数据库中的表使用performance_schema存储引擎。该数据库主要关注数据库运行过程中的性能相关的数据，与information_schema不同，information_schema主要关注server运行过程中的元数据信息
@@ -61,6 +384,7 @@ show profile all for query 1; -- 查询性能详细信息
 
 ### 入门
 在mysql的5.7版本中，性能模式是默认开启的，如果想要显式的关闭的话需要修改配置文件，不能直接进行修改，会报错Variable 'performance_schema' is a read only variable。
+![performace_schema相关属性列表](MySQL调优/performace_schema相关属性列表.png)
 
 ```mysql
 --查看performance_schema的属性
@@ -98,9 +422,7 @@ mysql> show create table setup_consumers;
 instruments: 生产者，用于采集mysql中各种各样的操作产生的事件信息，对应配置表中的配置项我们可以称为监控采集配置项。
 consumers:   消费者，对应的消费者表用于存储来自instruments采集的数据，对应配置表中的配置项我们可以称为消费存储配置项。
 
-### 2、performance_schema表的分类
 
-​		performance_schema库下的表可以按照监视不同的纬度就行分组。
 
 ```sql
 --语句事件记录表，这些表记录了语句事件信息，当前语句事件表events_statements_current、历史语句事件表events_statements_history和长语句历史事件表events_statements_history_long、以及聚合后的摘要表summary，其中，summary表还可以根据帐号(account)，主机(host)，程序(program)，线程(thread)，用户(user)和全局(global)再进行细分)
@@ -125,65 +447,7 @@ show tables like '%memory%';
 show tables like '%setup%';
 ```
 
-### 3、performance_schema的简单配置与使用
 
-​		数据库刚刚初始化并启动时，并非所有instruments(事件采集项，在采集项的配置表中每一项都有一个开关字段，或为YES，或为NO)和consumers(与采集项类似，也有一个对应的事件类型保存表配置项，为YES就表示对应的表保存性能数据，为NO就表示对应的表不保存性能数据)都启用了，所以默认不会收集所有的事件，可能你需要检测的事件并没有打开，需要进行设置，可以使用如下两个语句打开对应的instruments和consumers（行计数可能会因MySQL版本而异)。
-
-```sql
---打开等待事件的采集器配置项开关，需要修改setup_instruments配置表中对应的采集器配置项
-UPDATE setup_instruments SET ENABLED = 'YES', TIMED = 'YES'where name like 'wait%';
-
---打开等待事件的保存表配置开关，修改setup_consumers配置表中对应的配置项
-UPDATE setup_consumers SET ENABLED = 'YES'where name like '%wait%';
-
---当配置完成之后可以查看当前server正在做什么，可以通过查询events_waits_current表来得知，该表中每个线程只包含一行数据，用于显示每个线程的最新监视事件
-select * from events_waits_current\G
-*************************** 1. row ***************************
-            THREAD_ID: 11
-             EVENT_ID: 570
-         END_EVENT_ID: 570
-           EVENT_NAME: wait/synch/mutex/innodb/buf_dblwr_mutex
-               SOURCE: 
-          TIMER_START: 4508505105239280
-            TIMER_END: 4508505105270160
-           TIMER_WAIT: 30880
-                SPINS: NULL
-        OBJECT_SCHEMA: NULL
-          OBJECT_NAME: NULL
-           INDEX_NAME: NULL
-          OBJECT_TYPE: NULL
-OBJECT_INSTANCE_BEGIN: 67918392
-     NESTING_EVENT_ID: NULL
-   NESTING_EVENT_TYPE: NULL
-            OPERATION: lock
-      NUMBER_OF_BYTES: NULL
-                FLAGS: NULL
-/*该信息表示线程id为11的线程正在等待buf_dblwr_mutex锁，等待事件为30880
-属性说明：
-	id:事件来自哪个线程，事件编号是多少
-	event_name:表示检测到的具体的内容
-	source:表示这个检测代码在哪个源文件中以及行号
-	timer_start:表示该事件的开始时间
-	timer_end:表示该事件的结束时间
-	timer_wait:表示该事件总的花费时间
-注意：_current表中每个线程只保留一条记录，一旦线程完成工作，该表中不会再记录该线程的事件信息
-*/
-
-/*
-_history表中记录每个线程应该执行完成的事件信息，但每个线程的事件信息只会记录10条，再多就会被覆盖，*_history_long表中记录所有线程的事件信息，但总记录数量是10000，超过就会被覆盖掉
-*/
-select thread_id,event_id,event_name,timer_wait from events_waits_history order by thread_id limit 21;
-
-/*
-summary表提供所有事件的汇总信息，该组中的表以不同的方式汇总事件数据（如：按用户，按主机，按线程等等）。例如：要查看哪些instruments占用最多的时间，可以通过对events_waits_summary_global_by_event_name表的COUNT_STAR或SUM_TIMER_WAIT列进行查询（这两列是对事件的记录数执行COUNT（*）、事件记录的TIMER_WAIT列执行SUM（TIMER_WAIT）统计而来）
-*/
-SELECT EVENT_NAME,COUNT_STAR FROM events_waits_summary_global_by_event_name  ORDER BY COUNT_STAR DESC LIMIT 10;
-
-/*
-instance表记录了哪些类型的对象会被检测。这些对象在被server使用时，在该表中将会产生一条事件记录，例如，file_instances表列出了文件I/O操作及其关联文件名
-*/
-select * from file_instances limit 20; 
-```
 
 ### 4、常用配置项的参数说明
 
